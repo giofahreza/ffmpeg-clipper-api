@@ -1,0 +1,24 @@
+# Core Framework
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.8.2
+
+# Google Drive Integration
+google-api-python-client==2.143.0
+google-auth==2.34.0
+google-auth-httplib2==0.2.0
+
+# Video Processing
+ultralytics==8.2.90              # YOLOv8 face detection
+opencv-python-headless==4.10.0.84
+ffmpeg-python==0.2.0
+scipy==1.14.1                     # Savitzky-Golay smoothing
+numpy==1.26.4
+
+# Audio Processing
+faster-whisper                    # CPU-optimized Whisper for transcription
+pydub                            # High-level audio manipulation
+elevenlabs                       # Text-to-speech SDK
+
+# HTTP & Utilities
+requests==2.32.3
