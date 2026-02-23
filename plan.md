@@ -1,8 +1,18 @@
-# Video Editor API — Implementation Plan
+# Video & Audio Processing API — Implementation Plan
 
 ## Overview
 
-A stateless Python/FastAPI microservice for an n8n content pipeline. Handles three heavy video operations: AI-driven face-tracking crop (YOLOv8), FFmpeg subtitle burn-in, and image-to-video slideshow stitching (Ken Burns + crossfade).
+A stateless Python/FastAPI microservice for an n8n content pipeline. Handles comprehensive media processing including video editing and audio operations.
+
+**Video Operations:**
+- AI-driven face-tracking crop (YOLOv8)
+- FFmpeg subtitle burn-in
+- Image-to-video slideshow stitching (Ken Burns + crossfade)
+
+**Audio Operations:**
+- Speech-to-text transcription (faster-whisper)
+- Text-to-speech generation (ElevenLabs)
+- Audio editing (trim, merge, volume adjustment)
 
 **Pattern:** Mirrors the sibling `veo-auto` service — Google Drive credentials + file IDs come in the request body; Google Drive shareable URLs (`https://drive.google.com/file/d/ID/view`) are returned via webhook callback.
 
@@ -13,7 +23,7 @@ A stateless Python/FastAPI microservice for an n8n content pipeline. Handles thr
 ## Project Structure
 
 ```
-video-editor-api/
+ffmpeg-clipper-api/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py                    # FastAPI app, router registration, /health
@@ -21,17 +31,26 @@ video-editor-api/
 │   │   ├── __init__.py
 │   │   ├── common.py              # Shared credential + AcceptedResponse models
 │   │   ├── generate_clips.py      # Request/webhook models for /generate-clips
-│   │   └── ffmpeg_compose.py      # Request/webhook models for /ffmpeg-compose (both tasks)
+│   │   ├── ffmpeg_compose.py      # Request/webhook models for /ffmpeg-compose (both tasks)
+│   │   ├── transcribe.py          # Request/webhook models for /audio/transcribe
+│   │   ├── voice.py               # Request/webhook models for /audio/generate-voice
+│   │   └── edit.py                # Request/webhook models for /audio/edit
 │   ├── services/
 │   │   ├── __init__.py
 │   │   ├── gdrive.py              # Drive client factory, validate, download, upload
 │   │   ├── cutter.py              # YOLOv8 face track + Savitzky-Golay + FFmpeg crop
 │   │   ├── finisher.py            # FFmpeg SRT→ASS + style patch + burn-in
-│   │   └── stitcher.py            # FFmpeg Ken Burns + crossfade image-to-video
+│   │   ├── stitcher.py            # FFmpeg Ken Burns + crossfade image-to-video
+│   │   ├── transcription.py       # faster-whisper wrapper for speech-to-text
+│   │   ├── voice_gen.py           # ElevenLabs API wrapper for text-to-speech
+│   │   └── audio_edit.py          # pydub audio operations (trim, merge, volume)
 │   ├── routers/
 │   │   ├── __init__.py
 │   │   ├── generate_clips.py      # POST /api/v1/generate-clips
-│   │   └── ffmpeg_compose.py      # POST /api/v1/ffmpeg-compose (dispatches by task)
+│   │   ├── ffmpeg_compose.py      # POST /api/v1/ffmpeg-compose (dispatches by task)
+│   │   ├── transcribe.py          # POST /api/v1/audio/transcribe
+│   │   ├── voice.py               # POST /api/v1/audio/generate-voice
+│   │   └── edit.py                # POST /api/v1/audio/edit
 │   └── utils/
 │       ├── __init__.py
 │       ├── webhook.py             # POST to webhook_callback (3 retries, exponential backoff)
@@ -157,6 +176,111 @@ Takes an array of AI-generated images (from Drive) and an ElevenLabs audio track
 
 ---
 
+### POST `/api/v1/audio/transcribe`
+
+Extracts audio from video/audio files and generates timestamped subtitles using faster-whisper.
+
+**Request:**
+```json
+{
+  "google_drive": {
+    "credentials": { "type": "service_account", "project_id": "...", "private_key": "..." },
+    "source_file_id": "GDRIVE_VIDEO_OR_AUDIO_ID",
+    "target_folder_id": "GDRIVE_FOLDER_ID"
+  },
+  "transcription_settings": {
+    "model_size": "base",
+    "compute_type": "int8",
+    "language_hint": "en"
+  },
+  "webhook_callback": "https://n8n.host/webhook/abc123"
+}
+```
+
+**Webhook — success:**
+```json
+{
+  "status": "success",
+  "srt_file_id": "CAPTIONS_SRT_ID",
+  "srt_url": "https://drive.google.com/file/d/ID/view",
+  "text_summary": "Full raw transcript text..."
+}
+```
+
+---
+
+### POST `/api/v1/audio/generate-voice`
+
+Generates speech from text using ElevenLabs text-to-speech API.
+
+**Request:**
+```json
+{
+  "text_script": "Welcome to the future of AI automation...",
+  "google_drive": {
+    "credentials": { "type": "service_account", "...": "..." },
+    "target_folder_id": "GDRIVE_FOLDER_ID"
+  },
+  "elevenlabs_settings": {
+    "api_key": "ELEVENLABS_API_KEY",
+    "voice_id": "Rachel",
+    "model_id": "eleven_multilingual_v2"
+  },
+  "webhook_callback": "https://n8n.host/webhook/abc123"
+}
+```
+
+**Webhook — success:**
+```json
+{
+  "status": "success",
+  "audio_file_id": "VOICEOVER_MP3_ID",
+  "audio_url": "https://drive.google.com/file/d/ID/view",
+  "duration_seconds": 12.5
+}
+```
+
+---
+
+### POST `/api/v1/audio/edit`
+
+Performs audio editing operations: trim, merge, and volume adjustment.
+
+**Request:**
+```json
+{
+  "google_drive": {
+    "credentials": { "type": "service_account", "...": "..." },
+    "source_file_id": "AUDIO_FILE_ID",
+    "target_folder_id": "GDRIVE_FOLDER_ID"
+  },
+  "operations": [
+    { "type": "trim", "start_ms": 0, "end_ms": 30000 },
+    { "type": "volume", "adjustment_db": 3.0 },
+    { "type": "merge", "additional_file_ids": ["INTRO_ID", "OUTRO_ID"] }
+  ],
+  "output_format": "mp3",
+  "webhook_callback": "https://n8n.host/webhook/abc123"
+}
+```
+
+**Webhook — success:**
+```json
+{
+  "status": "success",
+  "edited_file_id": "EDITED_AUDIO_ID",
+  "edited_url": "https://drive.google.com/file/d/ID/view",
+  "duration_seconds": 45.2
+}
+```
+
+**Operations:**
+- **trim**: Cut audio to specified time range (milliseconds)
+- **volume**: Adjust loudness by dB offset (+3.0 = louder, -5.0 = quieter)
+- **merge**: Concatenate additional audio files from Drive (operations execute sequentially in array order)
+
+---
+
 ### Webhook — error (all endpoints)
 ```json
 {
@@ -229,6 +353,41 @@ Per timestamp segment:
 - `apply_ken_burns: false` → static image loop (no zoompan)
 - `transition: "crossfade"` → `xfade=transition=fade`
 
+### `transcription.py` — Speech-to-text engine
+
+1. Extract audio from video/audio file using FFmpeg: `ffmpeg -i input.mp4 -vn -acodec pcm_s16le -ar 16000 audio.wav`
+2. Load faster-whisper model (singleton pattern to avoid reloading per request)
+3. Run transcription with word-level timestamps
+4. Format output as SRT file (sequence number, timecode, text)
+5. Return SRT string + full transcript text
+
+- `model_size: "base"` → Good balance of accuracy/speed (recommended)
+- `compute_type: "int8"` → 50% RAM reduction with minimal accuracy loss
+- `language_hint: "en"` → Improves accuracy for known language
+
+### `voice_gen.py` — Text-to-speech engine
+
+1. Call ElevenLabs API with text script and settings
+2. Stream MP3 response to local file
+3. Calculate audio duration using pydub: `AudioSegment.from_file(path).duration_seconds`
+4. Return MP3 bytes + duration
+
+- Uses `elevenlabs.generate()` with streaming for memory efficiency
+- Supports all ElevenLabs voice IDs and models
+
+### `audio_edit.py` — Audio manipulation engine
+
+1. Load source audio file using pydub: `AudioSegment.from_file(path)`
+2. Apply operations sequentially:
+   - **trim**: `audio = audio[start_ms:end_ms]`
+   - **volume**: `audio = audio + adjustment_db`
+   - **merge**: Download additional files from Drive, concatenate: `audio = audio + audio2 + audio3`
+3. Export result: `audio.export(output_path, format=output_format)`
+
+- Operations execute in array order for predictable behavior
+- Supports mp3, wav, flac output formats
+- Auto-detects input format (mp3, wav, m4a, etc.)
+
 ---
 
 ## Data Models (Pydantic v2)
@@ -262,6 +421,30 @@ ffmpeg_compose.py
   ComposedMediaResult         { drive_url, drive_file_id }
   FFmpegComposeSuccessPayload { status: "success", composed_media: ComposedMediaResult }
   ErrorPayload                { status: "error", error_message: str }
+
+transcribe.py
+  TranscribeDriveConfig       credentials + source_file_id + target_folder_id
+  TranscriptionSettings       model_size, compute_type, language_hint
+  TranscribeRequest           google_drive + transcription_settings + webhook_callback
+  TranscribeSuccessPayload    { status: "success", srt_file_id, srt_url, text_summary }
+  ErrorPayload                { status: "error", error_message: str }
+
+voice.py
+  VoiceDriveConfig            credentials + target_folder_id
+  ElevenLabsSettings          api_key, voice_id, model_id
+  VoiceRequest                text_script + google_drive + elevenlabs_settings + webhook_callback
+  VoiceSuccessPayload         { status: "success", audio_file_id, audio_url, duration_seconds }
+  ErrorPayload                { status: "error", error_message: str }
+
+edit.py
+  EditDriveConfig             credentials + source_file_id + target_folder_id
+  TrimOperation               { type: "trim", start_ms: int, end_ms: int }
+  VolumeOperation             { type: "volume", adjustment_db: float }
+  MergeOperation              { type: "merge", additional_file_ids: List[str] }
+  AudioOperation              Annotated[Union[TrimOperation, VolumeOperation, MergeOperation], discriminator="type"]
+  EditRequest                 google_drive + operations: List[AudioOperation] + output_format + webhook_callback
+  EditSuccessPayload          { status: "success", edited_file_id, edited_url, duration_seconds }
+  ErrorPayload                { status: "error", error_message: str }
 ```
 
 ---
@@ -269,17 +452,29 @@ ffmpeg_compose.py
 ## Dependencies (`requirements.txt`)
 
 ```
+# Core Framework
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 pydantic==2.8.2
+
+# Google Drive Integration
 google-api-python-client==2.143.0
 google-auth==2.34.0
 google-auth-httplib2==0.2.0
-ultralytics==8.2.90
+
+# Video Processing
+ultralytics==8.2.90              # YOLOv8 face detection
 opencv-python-headless==4.10.0.84
 ffmpeg-python==0.2.0
-scipy==1.14.1
+scipy==1.14.1                     # Savitzky-Golay smoothing
 numpy==1.26.4
+
+# Audio Processing
+faster-whisper                    # CPU-optimized Whisper for transcription
+pydub                            # High-level audio manipulation
+elevenlabs                       # Text-to-speech SDK
+
+# HTTP & Utilities
 requests==2.32.3
 ```
 
@@ -319,19 +514,28 @@ YOLO_WEIGHTS=./weights/yolov8n-face.pt
 | 4 | `app/models/common.py` | Shared credential models |
 | 5 | `app/models/generate_clips.py` | Clip-cutting request/webhook models |
 | 6 | `app/models/ffmpeg_compose.py` | Compose request/webhook models (both tasks) |
-| 7 | `app/services/__init__.py` | Package marker |
-| 8 | `app/services/gdrive.py` | Google Drive service layer |
-| 9 | `app/services/cutter.py` | YOLOv8 face-tracking crop |
-| 10 | `app/services/finisher.py` | Caption burn-in |
-| 11 | `app/services/stitcher.py` | Image slideshow with Ken Burns |
-| 12 | `app/routers/__init__.py` | Package marker |
-| 13 | `app/routers/generate_clips.py` | `/api/v1/generate-clips` endpoint |
-| 14 | `app/routers/ffmpeg_compose.py` | `/api/v1/ffmpeg-compose` endpoint |
-| 15 | `app/utils/__init__.py` | Package marker |
-| 16 | `app/utils/job_dir.py` | `/tmp/job_<uuid>/` context manager |
-| 17 | `app/utils/webhook.py` | Webhook POST with retry |
-| 18 | `requirements.txt` | Python dependencies |
-| 19 | `.env.example` | Environment variable template |
+| 7 | `app/models/transcribe.py` | Transcription request/webhook models |
+| 8 | `app/models/voice.py` | Voice generation request/webhook models |
+| 9 | `app/models/edit.py` | Audio editing request/webhook models |
+| 10 | `app/services/__init__.py` | Package marker |
+| 11 | `app/services/gdrive.py` | Google Drive service layer |
+| 12 | `app/services/cutter.py` | YOLOv8 face-tracking crop |
+| 13 | `app/services/finisher.py` | Caption burn-in |
+| 14 | `app/services/stitcher.py` | Image slideshow with Ken Burns |
+| 15 | `app/services/transcription.py` | faster-whisper speech-to-text |
+| 16 | `app/services/voice_gen.py` | ElevenLabs text-to-speech |
+| 17 | `app/services/audio_edit.py` | pydub audio operations |
+| 18 | `app/routers/__init__.py` | Package marker |
+| 19 | `app/routers/generate_clips.py` | `/api/v1/generate-clips` endpoint |
+| 20 | `app/routers/ffmpeg_compose.py` | `/api/v1/ffmpeg-compose` endpoint |
+| 21 | `app/routers/transcribe.py` | `/api/v1/audio/transcribe` endpoint |
+| 22 | `app/routers/voice.py` | `/api/v1/audio/generate-voice` endpoint |
+| 23 | `app/routers/edit.py` | `/api/v1/audio/edit` endpoint |
+| 24 | `app/utils/__init__.py` | Package marker |
+| 25 | `app/utils/job_dir.py` | `/tmp/job_<uuid>/` context manager |
+| 26 | `app/utils/webhook.py` | Webhook POST with retry |
+| 27 | `requirements.txt` | Python dependencies |
+| 28 | `.env.example` | Environment variable template |
 
 ---
 
@@ -341,6 +545,8 @@ YOLO_WEIGHTS=./weights/yolov8n-face.pt
 # 1. Health check
 curl http://localhost:8000/health
 # → {"ok": true}
+
+# VIDEO ENDPOINTS
 
 # 2. Test add_captions
 curl -X POST http://localhost:8000/api/v1/ffmpeg-compose \
@@ -359,4 +565,42 @@ curl -X POST http://localhost:8000/api/v1/generate-clips \
   -H "Content-Type: application/json" \
   -d '{ "google_drive": { ... }, "timestamps": [...], "processing_rules": { ... }, "webhook_callback": "https://requestbin.io/..." }'
 # → 202 Accepted; check requestbin for webhook with clips array of drive_urls
+
+# AUDIO ENDPOINTS
+
+# 5. Test transcribe
+curl -X POST http://localhost:8000/api/v1/audio/transcribe \
+  -H "Content-Type: application/json" \
+  -d '{ "google_drive": { ... }, "transcription_settings": { "model_size": "base", "compute_type": "int8", "language_hint": "en" }, "webhook_callback": "https://requestbin.io/..." }'
+# → 202 Accepted; check requestbin for webhook with srt_file_id + text_summary
+
+# 6. Test generate-voice
+curl -X POST http://localhost:8000/api/v1/audio/generate-voice \
+  -H "Content-Type: application/json" \
+  -d '{ "text_script": "Hello world", "google_drive": { ... }, "elevenlabs_settings": { ... }, "webhook_callback": "https://requestbin.io/..." }'
+# → 202 Accepted; check requestbin for webhook with audio_file_id + duration_seconds
+
+# 7. Test audio edit (trim)
+curl -X POST http://localhost:8000/api/v1/audio/edit \
+  -H "Content-Type: application/json" \
+  -d '{ "google_drive": { ... }, "operations": [{ "type": "trim", "start_ms": 0, "end_ms": 30000 }], "output_format": "mp3", "webhook_callback": "https://requestbin.io/..." }'
+# → 202 Accepted; check requestbin for webhook with edited_file_id
+
+# 8. Test audio edit (volume)
+curl -X POST http://localhost:8000/api/v1/audio/edit \
+  -H "Content-Type: application/json" \
+  -d '{ "google_drive": { ... }, "operations": [{ "type": "volume", "adjustment_db": 3.0 }], "output_format": "mp3", "webhook_callback": "https://requestbin.io/..." }'
+# → 202 Accepted; check requestbin for edited audio
+
+# 9. Test audio edit (merge)
+curl -X POST http://localhost:8000/api/v1/audio/edit \
+  -H "Content-Type: application/json" \
+  -d '{ "google_drive": { ... }, "operations": [{ "type": "merge", "additional_file_ids": ["ID1", "ID2"] }], "output_format": "mp3", "webhook_callback": "https://requestbin.io/..." }'
+# → 202 Accepted; check requestbin for merged audio
+
+# 10. Test combined audio operations
+curl -X POST http://localhost:8000/api/v1/audio/edit \
+  -H "Content-Type: application/json" \
+  -d '{ "google_drive": { ... }, "operations": [{ "type": "trim", "start_ms": 0, "end_ms": 60000 }, { "type": "volume", "adjustment_db": 2.0 }], "output_format": "mp3", "webhook_callback": "https://requestbin.io/..." }'
+# → 202 Accepted; operations applied sequentially (trim first, then volume)
 ```
