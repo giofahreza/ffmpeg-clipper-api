@@ -5,6 +5,7 @@
 A stateless Python/FastAPI microservice for an n8n content pipeline. Handles comprehensive media processing including video editing and audio operations.
 
 **Video Operations:**
+- **Auto Viral Shorts Generator** - AI-powered intelligent clip selection (NEW!)
 - AI-driven face-tracking crop (YOLOv8)
 - FFmpeg subtitle burn-in
 - Image-to-video slideshow stitching (Ken Burns + crossfade)

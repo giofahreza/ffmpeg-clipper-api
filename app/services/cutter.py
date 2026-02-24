@@ -18,12 +18,13 @@ _yolo_model = None
 
 
 def get_yolo_model():
-    """Get or initialize the YOLO face detection model."""
+    """Get or initialize the YOLO detection model."""
     global _yolo_model
 
     if _yolo_model is None:
-        weights_path = os.getenv("YOLO_WEIGHTS", "./weights/yolov8n-face.pt")
-        logger.info(f"Loading YOLO model from {weights_path}")
+        # Use standard YOLOv8n for person detection (auto-downloads if needed)
+        weights_path = os.getenv("YOLO_WEIGHTS", "yolov8n.pt")
+        logger.info(f"Loading YOLO model: {weights_path}")
         _yolo_model = YOLO(weights_path)
 
     return _yolo_model
@@ -59,7 +60,7 @@ def extract_segment(
 
 def detect_faces_in_video(video_path: str) -> List[Tuple[int, int]]:
     """
-    Detect face centers in video frames using YOLO.
+    Detect person centers in video frames using YOLO.
 
     Args:
         video_path: Path to video file
@@ -78,17 +79,17 @@ def detect_faces_in_video(video_path: str) -> List[Tuple[int, int]]:
         if not ret:
             break
 
-        # Run YOLO detection
-        results = model(frame, verbose=False)
+        # Run YOLO detection (class 0 = person)
+        results = model(frame, verbose=False, classes=[0])
 
         if len(results[0].boxes) > 0:
-            # Use first detected face
+            # Use first detected person
             box = results[0].boxes[0].xyxy[0].cpu().numpy()
             center_x = int((box[0] + box[2]) / 2)
             center_y = int((box[1] + box[3]) / 2)
             prev_center = (center_x, center_y)
         else:
-            # No face detected, use previous center
+            # No person detected, use previous center
             if prev_center:
                 center_x, center_y = prev_center
             else:
@@ -169,20 +170,124 @@ def generate_crop_commands(
     return sendcmd_path
 
 
+def analyze_face_spread(video_path: str, aspect_ratio: str = "9:16") -> dict:
+    """
+    Analyze if faces in video can fit within target aspect ratio crop.
+
+    Args:
+        video_path: Path to video file
+        aspect_ratio: Target aspect ratio (e.g., "9:16")
+
+    Returns:
+        {
+            "can_crop": bool,
+            "has_faces": bool,
+            "face_spread_ratio": float,
+            "recommended_mode": "crop" or "scale_pad"
+        }
+    """
+    try:
+        model = get_yolo_model()
+    except (FileNotFoundError, Exception) as e:
+        logger.warning(f"YOLO model not available ({e}), defaulting to scale_pad mode")
+        return {
+            "can_crop": False,
+            "has_faces": False,
+            "face_spread_ratio": 0.0,
+            "recommended_mode": "scale_pad",
+            "error": str(e)
+        }
+
+    cap = cv2.VideoCapture(video_path)
+
+    video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    # Calculate crop dimensions for target aspect ratio
+    ar_width, ar_height = map(int, aspect_ratio.split(":"))
+    crop_height = video_height
+    crop_width = int(crop_height * ar_width / ar_height)
+
+    # Sample only 3 strategic frames (beginning, middle, end) for speed
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frames_to_check = [
+        total_frames // 4,      # 25% into video
+        total_frames // 2,      # Middle
+        3 * total_frames // 4   # 75% into video
+    ]
+
+    all_face_boxes = []
+
+    for target_frame in frames_to_check:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+        ret, frame = cap.read()
+
+        if ret:
+            # Detect people only (class 0)
+            results = model(frame, verbose=False, classes=[0])
+
+            for box in results[0].boxes:
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                all_face_boxes.append((x1, y1, x2, y2))
+
+    cap.release()
+
+    # No faces detected
+    if len(all_face_boxes) == 0:
+        logger.info("No faces detected - recommending scale_pad mode")
+        return {
+            "can_crop": False,
+            "has_faces": False,
+            "face_spread_ratio": 0.0,
+            "recommended_mode": "scale_pad"
+        }
+
+    # Calculate bounding box containing all faces
+    min_x = min(box[0] for box in all_face_boxes)
+    max_x = max(box[2] for box in all_face_boxes)
+    min_y = min(box[1] for box in all_face_boxes)
+    max_y = max(box[3] for box in all_face_boxes)
+
+    # Add 20% padding
+    padding = 0.2
+    face_width = max_x - min_x
+    face_height = max_y - min_y
+    min_x = max(0, min_x - face_width * padding)
+    max_x = min(video_width, max_x + face_width * padding)
+
+    face_spread_width = max_x - min_x
+    face_spread_ratio = face_spread_width / crop_width
+
+    # Can crop if faces fit within 9:16 frame (with some tolerance)
+    can_crop = face_spread_ratio <= 1.0
+
+    logger.info(f"Face analysis: spread_width={face_spread_width:.0f}, crop_width={crop_width}, ratio={face_spread_ratio:.2f}")
+    logger.info(f"Recommended mode: {'crop' if can_crop else 'scale_pad'}")
+
+    return {
+        "can_crop": can_crop,
+        "has_faces": True,
+        "face_spread_ratio": face_spread_ratio,
+        "recommended_mode": "crop" if can_crop else "scale_pad"
+    }
+
+
 def create_vertical_clip(
     segment_path: str,
     output_path: str,
     aspect_ratio: str = "9:16",
-    apply_face_tracking: bool = True
+    apply_face_tracking: bool = True,
+    crop_mode: str = "auto"
 ) -> None:
     """
-    Create vertical clip with optional face tracking.
+    Create vertical clip with intelligent auto-detection or manual mode.
 
     Args:
         segment_path: Path to extracted segment
         output_path: Output clip path
         aspect_ratio: Target aspect ratio (e.g., "9:16")
-        apply_face_tracking: Whether to apply YOLO face tracking
+        apply_face_tracking: Whether to apply YOLO face tracking (only for crop mode)
+        crop_mode: "auto" (smart detection), "crop" (force crop), "scale_pad" (force scale)
     """
     # Get video dimensions
     cap = cv2.VideoCapture(segment_path)
@@ -190,42 +295,64 @@ def create_vertical_clip(
     video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
 
-    # Calculate crop dimensions
+    # Calculate target dimensions
     ar_width, ar_height = map(int, aspect_ratio.split(":"))
-    crop_height = video_height
-    crop_width = int(crop_height * ar_width / ar_height)
+    target_width = ar_width * 120  # 1080 for 9:16
+    target_height = ar_height * 120  # 1920 for 9:16
 
-    if apply_face_tracking:
-        # Face tracking mode
-        centers = detect_faces_in_video(segment_path)
-        smoothed_centers = apply_savitzky_golay_smoothing(centers)
-        sendcmd_path = generate_crop_commands(
-            smoothed_centers, video_width, video_height, crop_width, crop_height
-        )
+    # Auto-detect best mode
+    if crop_mode == "auto":
+        analysis = analyze_face_spread(segment_path, aspect_ratio)
+        crop_mode = analysis["recommended_mode"]
+        logger.info(f"Auto-detected crop mode: {crop_mode} (has_faces={analysis['has_faces']}, can_crop={analysis['can_crop']})")
 
+    if crop_mode == "scale_pad":
+        # Scale and pad mode - keeps full video visible with black bars
+        # Scale to fit width, then pad height with black bars
         cmd = [
             "ffmpeg", "-y",
             "-i", segment_path,
-            "-filter_complex",
-            f"sendcmd=f={sendcmd_path},crop={crop_width}:{crop_height}:0:0,scale={ar_width * 120}:{ar_height * 120}",
+            "-vf", f"scale={target_width}:-1,pad={target_width}:{target_height}:0:(oh-ih)/2:black",
             "-c:v", "libx264", "-preset", "medium", "-crf", "23",
             "-c:a", "aac", "-b:a", "192k",
             output_path
         ]
     else:
-        # Static center crop
-        crop_x = (video_width - crop_width) // 2
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", segment_path,
-            "-vf", f"crop={crop_width}:{crop_height}:{crop_x}:0,scale={ar_width * 120}:{ar_height * 120}",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-            "-c:a", "aac", "-b:a", "192k",
-            output_path
-        ]
+        # Crop mode (original behavior)
+        crop_height = video_height
+        crop_width = int(crop_height * ar_width / ar_height)
+
+        if apply_face_tracking:
+            # Face tracking mode
+            centers = detect_faces_in_video(segment_path)
+            smoothed_centers = apply_savitzky_golay_smoothing(centers)
+            sendcmd_path = generate_crop_commands(
+                smoothed_centers, video_width, video_height, crop_width, crop_height
+            )
+
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", segment_path,
+                "-filter_complex",
+                f"sendcmd=f={sendcmd_path},crop={crop_width}:{crop_height}:0:0,scale={target_width}:{target_height}",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                "-c:a", "aac", "-b:a", "192k",
+                output_path
+            ]
+        else:
+            # Static center crop
+            crop_x = (video_width - crop_width) // 2
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", segment_path,
+                "-vf", f"crop={crop_width}:{crop_height}:{crop_x}:0,scale={target_width}:{target_height}",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                "-c:a", "aac", "-b:a", "192k",
+                output_path
+            ]
 
     subprocess.run(cmd, check=True, capture_output=True)
-    logger.info(f"Created vertical clip: {output_path}")
+    logger.info(f"Created vertical clip: {output_path} (mode: {crop_mode})")
 
 
 def generate_clips(

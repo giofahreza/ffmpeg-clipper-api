@@ -4,7 +4,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import generate_clips, ffmpeg_compose, transcribe, voice, edit
+from app.routers import ffmpeg_compose, transcribe, voice, edit, smart_clips
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,7 +34,7 @@ async def health_check():
 
 
 # Register routers
-app.include_router(generate_clips.router, prefix="/api/v1", tags=["Video"])
+app.include_router(smart_clips.router, prefix="/api/v1", tags=["Video"])
 app.include_router(ffmpeg_compose.router, prefix="/api/v1", tags=["Video"])
 app.include_router(transcribe.router, prefix="/api/v1/audio", tags=["Audio"])
 app.include_router(voice.router, prefix="/api/v1/audio", tags=["Audio"])

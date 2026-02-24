@@ -1,7 +1,7 @@
 """Text-to-speech generation using ElevenLabs API."""
 
 import logging
-from elevenlabs import generate, set_api_key
+from elevenlabs.client import ElevenLabs
 from pydub import AudioSegment
 
 logger = logging.getLogger(__name__)
@@ -25,11 +25,11 @@ def generate_speech(
     Returns:
         MP3 audio bytes
     """
-    set_api_key(api_key)
+    client = ElevenLabs(api_key=api_key)
 
     logger.info(f"Generating speech with voice: {voice_id}")
 
-    audio = generate(
+    audio = client.generate(
         text=text,
         voice=voice_id,
         model=model_id
