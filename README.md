@@ -1,131 +1,149 @@
 # Video & Audio Processing API
 
-A stateless Python/FastAPI microservice for comprehensive media processing in n8n workflows. Supports video editing (face-tracking crop, subtitle burn-in, slideshow stitching) and audio operations (transcription, voice generation, editing).
+FastAPI microservice for automated video and audio processing with Google Drive integration. Perfect for n8n workflows and automation.
 
-## Features
-
-### Video Operations
-- **🔥 Auto Viral Shorts** - AI-powered viral clip generator (NEW!)
-- **AI Face-Tracking Crop** - Convert horizontal videos to vertical 9:16 clips with YOLOv8 face detection
-- **Subtitle Burn-In** - Add styled captions to videos using FFmpeg ASS subtitles
-- **Image Slideshow** - Create videos from images with Ken Burns effect and crossfade transitions
-
-### Audio Operations
-- **Speech-to-Text** - Transcribe videos/audio to SRT subtitles using faster-whisper
-- **Text-to-Speech** - Generate voiceovers with ElevenLabs API
-- **Audio Editing** - Trim, merge, and adjust volume of audio files
-
-## Architecture
-
-**Async Lifecycle:** All endpoints return `202 Accepted` immediately and post results to webhook callback when complete.
-
-**Pattern:** Google Drive credentials + file IDs in request body → Processing → Drive shareable URLs returned via webhook.
-
-**Isolation:** Each job runs in isolated `/tmp/job_<uuid>/` directory with guaranteed cleanup.
-
-## Quick Start
+## 🚀 Quick Start
 
 ### Prerequisites
-
 - Python 3.11+
-- FFmpeg installed (`apt install ffmpeg` or `brew install ffmpeg`)
-- Google Cloud service account with Drive API access
-- (Optional) ElevenLabs API key for voice generation
+- FFmpeg (`brew install ffmpeg` or `apt install ffmpeg`)
+- Google Drive credentials (OAuth2 or Service Account)
 
 ### Installation
 
 ```bash
-# Clone repository
+# Clone and install
 git clone <your-repo-url>
 cd ffmpeg-clipper-api
-
-# Install dependencies
 pip install -r requirements.txt
 
-# Download YOLO face detection weights
-mkdir -p weights
-# Download yolov8n-face.pt from:
-# https://github.com/akanametov/yolov8-face/releases
-# Place in weights/ directory
-
-# Copy environment template
-cp .env.example .env
+# Run server
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-### Running the Server
+Server will run at `http://localhost:8000`
+API docs at `http://localhost:8000/docs`
 
-```bash
-# Development
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+---
 
-# Production
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
-```
+## 📋 Features
 
-## API Endpoints
+### 🎬 Smart Clips (AI Viral Shorts Generator)
+Unified endpoint for generating viral YouTube Shorts from long videos.
+
+**3 Operating Modes:**
+- **analyze_only** - Preview best moments with AI scoring (no clips generated)
+- **auto_generate** - AI finds and generates viral clips automatically
+- **manual_generate** - Generate clips from your specified timestamps
+
+**3 Crop Modes:**
+- **auto** - Smart detection (crop if people fit, else scale_pad) *experimental*
+- **crop** - Zoom and crop to fill 9:16 frame (best for single person)
+- **scale_pad** - Fit full video with black bars (best for multi-person videos)
+
+**AI Features:**
+- Virality scoring (speech energy, face presence, scene dynamics, keywords)
+- Face/person detection with YOLOv8
+- Automatic subtitle generation
+- Scene detection and selection
+
+### 🎥 Other Video Operations
+- **Subtitle Burn-In** - Add styled captions using FFmpeg
+- **Image Slideshow** - Create videos from images with Ken Burns effect
+
+### 🎙️ Audio Operations
+- **Speech-to-Text** - Transcribe using faster-whisper (CPU-optimized)
+- **Text-to-Speech** - Generate voiceovers with ElevenLabs
+- **Audio Editing** - Trim, merge, adjust volume
+
+---
+
+## 📡 API Endpoints
 
 ### Health Check
-
 ```bash
 GET /health
-```
-
-**Response:**
-```json
-{"ok": true}
+# Response: {"ok": true}
 ```
 
 ---
 
-### Video Endpoints
+### POST `/api/v1/smart-clips`
 
-#### POST `/api/v1/auto-shorts` 🔥 NEW
+Generate viral shorts from long-form content.
 
-Automatically generate viral YouTube Shorts from long-form content using AI.
+#### Mode 1: Analyze Only (Preview Best Moments)
 
-**Features:**
-- Intelligent scene detection and clip selection
-- Virality scoring based on:
-  - Speech energy (fast-paced dialogue)
-  - Face presence (engagement)
-  - Scene dynamics (visual interest)
-  - Viral keywords (emotional triggers)
-- Automatic vertical crop with face tracking
-- Auto-generated captions
-- Returns top N most viral clips
-
-**Request:**
 ```json
 {
   "google_drive": {
-    "credentials": { "type": "oauth2", "...": "..." },
-    "source_file_id": "LONG_VIDEO_ID",
-    "target_folder_id": "GDRIVE_FOLDER_ID"
+    "credentials": {
+      "type": "oauth2",
+      "client_id": "...",
+      "client_secret": "...",
+      "refresh_token": "..."
+    },
+    "source_file_id": "GOOGLE_DRIVE_VIDEO_ID",
+    "target_folder_id": "GOOGLE_DRIVE_FOLDER_ID"
   },
   "settings": {
+    "mode": "analyze_only",
     "target_duration": 30,
-    "min_duration": 20,
-    "max_duration": 45,
-    "max_clips": 3,
-    "add_captions": true,
-    "aspect_ratio": "9:16",
+    "max_clips": 5,
     "speech_energy_weight": 0.3,
     "face_presence_weight": 0.2,
     "scene_change_weight": 0.2,
-    "caption_keywords_weight": 0.3,
-    "caption_font": "Montserrat-Black",
-    "caption_font_size": 28,
-    "caption_color": "&H00FFFF&"
+    "caption_keywords_weight": 0.3
   },
   "webhook_callback": "https://n8n.host/webhook/abc123"
 }
 ```
 
-**Webhook Payload:**
+**Webhook Response:**
 ```json
 {
   "status": "success",
-  "shorts": [
+  "mode": "analyze_only",
+  "segments": [
+    {
+      "segment_number": 1,
+      "start_time": 45.2,
+      "end_time": 75.8,
+      "duration": 30.6,
+      "virality_score": 0.87,
+      "keywords": ["amazing", "wow"],
+      "speech_energy": 0.92,
+      "face_presence": 0.85,
+      "scene_changes": 3
+    }
+  ],
+  "total_segments": 5
+}
+```
+
+#### Mode 2: Auto-Generate (AI Selects & Creates Clips)
+
+```json
+{
+  "google_drive": { /* same as above */ },
+  "settings": {
+    "mode": "auto_generate",
+    "target_duration": 30,
+    "max_clips": 3,
+    "add_captions": true,
+    "aspect_ratio": "9:16",
+    "crop_mode": "scale_pad"
+  },
+  "webhook_callback": "https://n8n.host/webhook/abc123"
+}
+```
+
+**Webhook Response:**
+```json
+{
+  "status": "success",
+  "mode": "auto_generate",
+  "clips": [
     {
       "clip_number": 1,
       "drive_url": "https://drive.google.com/file/d/ID1/view",
@@ -134,86 +152,89 @@ Automatically generate viral YouTube Shorts from long-form content using AI.
       "end_time": 75.8,
       "duration": 30.6,
       "virality_score": 0.87,
-      "keywords": ["amazing", "wow", "check", "secret"]
+      "keywords": ["amazing", "wow"]
     }
   ],
-  "total_clips": 3,
-  "source_duration": 300.5
+  "total_clips": 3
 }
 ```
 
-**Virality Scoring:**
-- **Speech Energy** - Faster dialogue = higher engagement
-- **Face Presence** - Clear faces = better retention
-- **Scene Changes** - Visual dynamics = more interesting
-- **Viral Keywords** - Emotional triggers, questions, CTAs
+#### Mode 3: Manual Generate (User-Specified Timestamps)
 
----
-
-#### POST `/api/v1/generate-clips`
-
-Generate vertical clips from horizontal video with AI face tracking.
-
-**Request:**
 ```json
 {
-  "google_drive": {
-    "credentials": {
-      "type": "service_account",
-      "project_id": "...",
-      "private_key": "...",
-      "client_email": "..."
-    },
-    "source_file_id": "GDRIVE_VIDEO_ID",
-    "target_folder_id": "GDRIVE_FOLDER_ID"
-  },
-  "timestamps": [
-    { "start": 12.5, "end": 45.0 },
-    { "start": 60.0, "end": 90.0 }
-  ],
-  "processing_rules": {
+  "google_drive": { /* same as above */ },
+  "settings": {
+    "mode": "manual_generate",
+    "manual_timestamps": [
+      {"start": 10, "end": 40},
+      {"start": 60, "end": 90}
+    ],
+    "add_captions": false,
     "aspect_ratio": "9:16",
-    "apply_face_tracking": true,
-    "stabilization_filter": "savitzky-golay"
+    "crop_mode": "scale_pad"
   },
   "webhook_callback": "https://n8n.host/webhook/abc123"
 }
 ```
 
-**Immediate Response:** `202 Accepted`
-
-**Webhook Payload:**
+**Webhook Response:**
 ```json
 {
   "status": "success",
+  "mode": "manual_generate",
   "clips": [
     {
+      "clip_number": 1,
       "drive_url": "https://drive.google.com/file/d/ID1/view",
-      "drive_file_id": "ID1"
-    },
-    {
-      "drive_url": "https://drive.google.com/file/d/ID2/view",
-      "drive_file_id": "ID2"
+      "drive_file_id": "ID1",
+      "start_time": 10.0,
+      "end_time": 40.0,
+      "duration": 30.0
     }
   ]
 }
 ```
 
+#### Settings Reference
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `mode` | string | `"auto_generate"` | `analyze_only`, `auto_generate`, or `manual_generate` |
+| `manual_timestamps` | array | `null` | Required for `manual_generate` mode |
+| `target_duration` | int | `30` | Target clip length in seconds |
+| `max_clips` | int | `3` | Maximum clips to generate |
+| `add_captions` | bool | `true` | Auto-generate subtitles |
+| `aspect_ratio` | string | `"9:16"` | Output aspect ratio |
+| `crop_mode` | string | `"auto"` | `auto`, `crop`, or `scale_pad` |
+| `apply_face_tracking` | bool | `true` | Track faces when using crop mode |
+| `speech_energy_weight` | float | `0.3` | AI scoring weight (0-1) |
+| `face_presence_weight` | float | `0.2` | AI scoring weight (0-1) |
+| `scene_change_weight` | float | `0.2` | AI scoring weight (0-1) |
+| `caption_keywords_weight` | float | `0.3` | AI scoring weight (0-1) |
+
+**Crop Mode Guide:**
+- **`auto`** *(experimental)* - Detects people and chooses best mode. May crash on large files.
+- **`crop`** - Crops and zooms to fill frame. Use for single-person videos.
+- **`scale_pad`** - Fits full video with black bars. **Recommended for multi-person videos.**
+
+See [CROP_MODES.md](CROP_MODES.md) for detailed documentation.
+
 ---
 
-#### POST `/api/v1/ffmpeg-compose`
+### POST `/api/v1/ffmpeg-compose`
 
-Multi-task endpoint for subtitle burn-in or image slideshow.
+Add captions or create slideshows.
 
 **Task 1: Add Captions**
 ```json
 {
   "task": "add_captions",
   "google_drive": {
-    "credentials": { "type": "service_account", "...": "..." },
-    "video_file_id": "GDRIVE_VIDEO_ID",
-    "srt_file_id": "GDRIVE_SRT_ID",
-    "target_folder_id": "GDRIVE_FOLDER_ID"
+    "credentials": { /* ... */ },
+    "video_file_id": "VIDEO_ID",
+    "srt_file_id": "SRT_ID",
+    "target_folder_id": "FOLDER_ID"
   },
   "caption_styling": {
     "font": "Montserrat-Black",
@@ -231,10 +252,10 @@ Multi-task endpoint for subtitle burn-in or image slideshow.
 {
   "task": "stitch_images",
   "google_drive": {
-    "credentials": { "type": "service_account", "...": "..." },
-    "image_ids": ["IMG_1", "IMG_2", "IMG_3"],
+    "credentials": { /* ... */ },
+    "image_ids": ["IMG1", "IMG2", "IMG3"],
     "audio_id": "AUDIO_ID",
-    "target_folder_id": "GDRIVE_FOLDER_ID"
+    "target_folder_id": "FOLDER_ID"
   },
   "operations": {
     "resolution": "1080x1920",
@@ -246,32 +267,18 @@ Multi-task endpoint for subtitle burn-in or image slideshow.
 }
 ```
 
-**Webhook Payload:**
-```json
-{
-  "status": "success",
-  "composed_media": {
-    "drive_url": "https://drive.google.com/file/d/ID/view",
-    "drive_file_id": "ID"
-  }
-}
-```
-
 ---
 
-### Audio Endpoints
-
-#### POST `/api/v1/audio/transcribe`
+### POST `/api/v1/audio/transcribe`
 
 Transcribe video/audio to SRT subtitles.
 
-**Request:**
 ```json
 {
   "google_drive": {
-    "credentials": { "type": "service_account", "...": "..." },
+    "credentials": { /* ... */ },
     "source_file_id": "VIDEO_OR_AUDIO_ID",
-    "target_folder_id": "GDRIVE_FOLDER_ID"
+    "target_folder_id": "FOLDER_ID"
   },
   "transcription_settings": {
     "model_size": "base",
@@ -282,29 +289,28 @@ Transcribe video/audio to SRT subtitles.
 }
 ```
 
-**Webhook Payload:**
+**Response:**
 ```json
 {
   "status": "success",
-  "srt_file_id": "CAPTIONS_SRT_ID",
+  "srt_file_id": "SRT_ID",
   "srt_url": "https://drive.google.com/file/d/ID/view",
-  "text_summary": "Full transcript text..."
+  "text_summary": "Full transcript..."
 }
 ```
 
 ---
 
-#### POST `/api/v1/audio/generate-voice`
+### POST `/api/v1/audio/generate-voice`
 
-Generate speech from text using ElevenLabs.
+Generate speech using ElevenLabs.
 
-**Request:**
 ```json
 {
-  "text_script": "Welcome to the future of AI automation...",
+  "text_script": "Your voiceover text here...",
   "google_drive": {
-    "credentials": { "type": "service_account", "...": "..." },
-    "target_folder_id": "GDRIVE_FOLDER_ID"
+    "credentials": { /* ... */ },
+    "target_folder_id": "FOLDER_ID"
   },
   "elevenlabs_settings": {
     "api_key": "ELEVENLABS_API_KEY",
@@ -315,132 +321,125 @@ Generate speech from text using ElevenLabs.
 }
 ```
 
-**Webhook Payload:**
-```json
-{
-  "status": "success",
-  "audio_file_id": "VOICEOVER_MP3_ID",
-  "audio_url": "https://drive.google.com/file/d/ID/view",
-  "duration_seconds": 12.5
-}
-```
-
 ---
 
-#### POST `/api/v1/audio/edit`
+### POST `/api/v1/audio/edit`
 
-Edit audio with trim, merge, and volume operations.
+Trim, merge, or adjust volume.
 
-**Request:**
 ```json
 {
   "google_drive": {
-    "credentials": { "type": "service_account", "...": "..." },
-    "source_file_id": "AUDIO_FILE_ID",
-    "target_folder_id": "GDRIVE_FOLDER_ID"
+    "credentials": { /* ... */ },
+    "source_file_id": "AUDIO_ID",
+    "target_folder_id": "FOLDER_ID"
   },
   "operations": [
-    { "type": "trim", "start_ms": 0, "end_ms": 30000 },
-    { "type": "volume", "adjustment_db": 3.0 },
-    { "type": "merge", "additional_file_ids": ["INTRO_ID", "OUTRO_ID"] }
+    {"type": "trim", "start_ms": 0, "end_ms": 30000},
+    {"type": "volume", "adjustment_db": 3.0}
   ],
   "output_format": "mp3",
   "webhook_callback": "https://n8n.host/webhook/abc123"
 }
 ```
 
-**Operations:**
+**Available Operations:**
 - `trim` - Cut audio to time range (milliseconds)
 - `volume` - Adjust loudness (+3.0 = louder, -5.0 = quieter)
-- `merge` - Concatenate additional files (executed sequentially in array order)
+- `merge` - Concatenate additional files
 
-**Webhook Payload:**
+---
+
+## 🔧 Configuration
+
+### Environment Variables
+
+Create `.env` file:
+```bash
+# Optional - YOLO weights path
+YOLO_WEIGHTS=yolov8n.pt
+```
+
+### Google Drive Credentials
+
+**Option 1: OAuth2** (User authentication)
 ```json
 {
-  "status": "success",
-  "edited_file_id": "EDITED_AUDIO_ID",
-  "edited_url": "https://drive.google.com/file/d/ID/view",
-  "duration_seconds": 45.2
+  "type": "oauth2",
+  "client_id": "...",
+  "client_secret": "...",
+  "refresh_token": "..."
+}
+```
+
+**Option 2: Service Account** (Server-to-server)
+```json
+{
+  "type": "service_account",
+  "project_id": "...",
+  "private_key": "...",
+  "client_email": "..."
 }
 ```
 
 ---
 
-### Error Handling
+## 🐳 Deployment
 
-All endpoints send error webhooks on failure:
-
-```json
-{
-  "status": "error",
-  "error_message": "FFmpeg failed: width not divisible by 2"
-}
-```
-
-## n8n Integration
-
-### Example Workflow
-
-1. **HTTP Request Node** - POST to API endpoint
-2. **Webhook Node** - Listen for callback
-3. **Download Node** - Fetch result from Drive URL
-
-### Webhook Configuration
-
-```javascript
-// n8n webhook URL format
-https://your-n8n-instance.com/webhook/unique-identifier
-```
-
-The API will POST the result to this URL when processing completes.
-
-## Deployment
-
-### Docker (Recommended for Proxmox)
+### Docker
 
 ```dockerfile
 FROM python:3.11-slim
 
-# Install system dependencies
 RUN apt-get update && \
     apt-get install -y ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application
 COPY app/ ./app/
-COPY weights/ ./weights/
 
-# Expose port
 EXPOSE 8000
-
-# Run server
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
 ### Resource Requirements
+- **CPU:** 2 vCPU minimum
+- **RAM:** 4GB (for Whisper transcription)
+- **Storage:** 10GB
+- **Network:** Access to Google Drive API, ElevenLabs API
 
-- CPU: 2 vCPU
-- RAM: 4GB (int8 Whisper quantization)
-- Storage: 10GB NVMe
-- Network: Outbound to Google Drive, ElevenLabs API
+---
 
-## Troubleshooting
+## 🔍 Architecture
 
-### YOLO Model Not Found
+**Async Pattern:**
+All endpoints return `202 Accepted` immediately. Results are sent to webhook callback when processing completes.
+
+**Workflow:**
+1. Client POSTs request → Get `202 Accepted` response
+2. API processes in background
+3. API POSTs result to webhook URL
+4. Client receives result with Google Drive URLs
+
+**Isolation:**
+Each job runs in isolated `/tmp/job_<uuid>/` directory with automatic cleanup.
+
+---
+
+## 🛠️ Troubleshooting
+
+### YOLOv8 Model Download
+
+The YOLOv8n model auto-downloads on first use. To pre-download:
 
 ```bash
-# Download weights
-mkdir -p weights
-wget https://github.com/akanametov/yolov8-face/releases/download/v0.0.0/yolov8n-face.pt \
-  -O weights/yolov8n-face.pt
+python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 ```
 
-### FFmpeg Not Installed
+### FFmpeg Not Found
 
 ```bash
 # Ubuntu/Debian
@@ -450,22 +449,33 @@ sudo apt-get install ffmpeg
 brew install ffmpeg
 ```
 
-### Google Drive Authentication Fails
+### Google Drive Errors
 
 - Verify service account has Drive API enabled
-- Check service account email has access to target folder
-- Ensure credentials JSON is complete and valid
+- Check folder permissions for service account email
+- Ensure credentials JSON is complete
 
-### ElevenLabs API Errors
+### Auto Crop Mode Crashes
 
-- Verify API key is valid
-- Check voice_id exists in your account
-- Monitor API quota/rate limits
+Auto mode with YOLO detection is resource-intensive. For multi-person videos, use:
+```json
+{"crop_mode": "scale_pad"}
+```
 
-## License
+---
+
+## 📚 Additional Documentation
+
+- [CROP_MODES.md](CROP_MODES.md) - Detailed crop mode guide with examples
+
+---
+
+## 📄 License
 
 MIT
 
-## Support
+---
 
-For issues and feature requests, please open a GitHub issue.
+## 💬 Support
+
+For issues and feature requests, open a GitHub issue.
