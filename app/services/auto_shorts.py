@@ -64,7 +64,7 @@ def detect_scenes(video_path: str, threshold: float = 0.3) -> List[float]:
         "-"
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, stderr=subprocess.STDOUT)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     output = result.stdout
 
     # Parse scene change timestamps from FFmpeg output
