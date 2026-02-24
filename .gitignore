@@ -49,6 +49,7 @@ Thumbs.db
 
 # YOLO Weights (download separately)
 weights/*.pt
+*.pt
 
 # Test Files
 test_auto_shorts.py

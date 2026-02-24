@@ -5,6 +5,7 @@ A stateless Python/FastAPI microservice for comprehensive media processing in n8
 ## Features
 
 ### Video Operations
+- **🔥 Auto Viral Shorts** - AI-powered viral clip generator (NEW!)
 - **AI Face-Tracking Crop** - Convert horizontal videos to vertical 9:16 clips with YOLOv8 face detection
 - **Subtitle Burn-In** - Add styled captions to videos using FFmpeg ASS subtitles
 - **Image Slideshow** - Create videos from images with Ken Burns effect and crossfade transitions
@@ -77,6 +78,77 @@ GET /health
 ---
 
 ### Video Endpoints
+
+#### POST `/api/v1/auto-shorts` 🔥 NEW
+
+Automatically generate viral YouTube Shorts from long-form content using AI.
+
+**Features:**
+- Intelligent scene detection and clip selection
+- Virality scoring based on:
+  - Speech energy (fast-paced dialogue)
+  - Face presence (engagement)
+  - Scene dynamics (visual interest)
+  - Viral keywords (emotional triggers)
+- Automatic vertical crop with face tracking
+- Auto-generated captions
+- Returns top N most viral clips
+
+**Request:**
+```json
+{
+  "google_drive": {
+    "credentials": { "type": "oauth2", "...": "..." },
+    "source_file_id": "LONG_VIDEO_ID",
+    "target_folder_id": "GDRIVE_FOLDER_ID"
+  },
+  "settings": {
+    "target_duration": 30,
+    "min_duration": 20,
+    "max_duration": 45,
+    "max_clips": 3,
+    "add_captions": true,
+    "aspect_ratio": "9:16",
+    "speech_energy_weight": 0.3,
+    "face_presence_weight": 0.2,
+    "scene_change_weight": 0.2,
+    "caption_keywords_weight": 0.3,
+    "caption_font": "Montserrat-Black",
+    "caption_font_size": 28,
+    "caption_color": "&H00FFFF&"
+  },
+  "webhook_callback": "https://n8n.host/webhook/abc123"
+}
+```
+
+**Webhook Payload:**
+```json
+{
+  "status": "success",
+  "shorts": [
+    {
+      "clip_number": 1,
+      "drive_url": "https://drive.google.com/file/d/ID1/view",
+      "drive_file_id": "ID1",
+      "start_time": 45.2,
+      "end_time": 75.8,
+      "duration": 30.6,
+      "virality_score": 0.87,
+      "keywords": ["amazing", "wow", "check", "secret"]
+    }
+  ],
+  "total_clips": 3,
+  "source_duration": 300.5
+}
+```
+
+**Virality Scoring:**
+- **Speech Energy** - Faster dialogue = higher engagement
+- **Face Presence** - Clear faces = better retention
+- **Scene Changes** - Visual dynamics = more interesting
+- **Viral Keywords** - Emotional triggers, questions, CTAs
+
+---
 
 #### POST `/api/v1/generate-clips`
 
